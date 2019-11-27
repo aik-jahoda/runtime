@@ -11,6 +11,16 @@ namespace System.Net.Http.HPack
     {
         private IEnumerator<KeyValuePair<string, string>> _enumerator;
 
+        private readonly DynamicTable _dynamicTable;
+        private readonly uint _maxDynamicTableSize = 4096;
+
+        private uint? _headerTableSizeToConfirm = null;
+
+        public HPackEncoder(int maxDynamicTableSize = HPackDecoder.DefaultHeaderTableSize)
+        {
+            _dynamicTable = new DynamicTable(maxDynamicTableSize);
+        }
+
         public bool BeginEncode(IEnumerable<KeyValuePair<string, string>> headers, Span<byte> buffer, out int length)
         {
             _enumerator = headers.GetEnumerator();
@@ -38,6 +48,7 @@ namespace System.Net.Http.HPack
 
         private bool Encode(Span<byte> buffer, bool throwIfNoneEncoded, out int length)
         {
+            Debug.Assert(_enumerator != null);
             int currentLength = 0;
             do
             {
@@ -104,7 +115,7 @@ namespace System.Net.Http.HPack
                 return false;
             }
 
-            if (!EncodeString(name, buffer.Slice(i), out int nameLength, lowercase: true))
+            if (!EncodeStringLiteral(name, buffer.Slice(i), out int nameLength, lowercase: true, onlyAscii: true))
             {
                 return false;
             }
@@ -116,7 +127,7 @@ namespace System.Net.Http.HPack
                 return false;
             }
 
-            if (!EncodeString(value, buffer.Slice(i), out int valueLength, lowercase: false))
+            if (!EncodeStringLiteral(value, buffer.Slice(i), out int valueLength))
             {
                 return false;
             }
@@ -127,37 +138,49 @@ namespace System.Net.Http.HPack
             return true;
         }
 
-        private bool EncodeString(string value, Span<byte> destination, out int bytesWritten, bool lowercase)
+        public HeaderTableIndex GetIndex(byte[] name, byte[] value)
         {
-            // From https://tools.ietf.org/html/rfc7541#section-5.2
-            // ------------------------------------------------------
-            //   0   1   2   3   4   5   6   7
-            // +---+---+---+---+---+---+---+---+
-            // | H |    String Length (7+)     |
-            // +---+---------------------------+
-            // |  String Data (Length octets)  |
-            // +-------------------------------+
-            const int toLowerMask = 0x20;
+            return _dynamicTable.GetIndex(name, value);
+        }
 
-            if (destination.Length != 0)
+        public bool EncodeLiteralField(HeaderTableIndex index, ReadOnlySpan<byte> name, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
+        {
+            if (index.HeaderWithValueIndex.HasValue)
             {
-                destination[0] = 0; // TODO: Use Huffman encoding
-                if (IntegerEncoder.Encode(value.Length, 7, destination, out int integerLength))
+                return EncodeIndexedHeaderField(index.HeaderWithValueIndex.GetValueOrDefault(), destination, out bytesWritten);
+            }
+
+            if (index.HeaderIndex.HasValue)
+            {
+                bool encodeHeaderIndexSuccess = EncodeLiteralHeaderFieldWithIncrementalIndexing(index.HeaderIndex.GetValueOrDefault(), value, destination, out bytesWritten);
+
+                if (encodeHeaderIndexSuccess)
                 {
-                    Debug.Assert(integerLength >= 1);
+                    _dynamicTable.Insert(index.HeaderIndex.GetValueOrDefault(), value);
+                }
 
-                    destination = destination.Slice(integerLength);
-                    if (value.Length <= destination.Length)
-                    {
-                        for (int i = 0; i < value.Length; i++)
-                        {
-                            char c = value[i];
-                            destination[i] = (byte)(lowercase && (uint)(c - 'A') <= ('Z' - 'A') ? c | toLowerMask : c);
-                        }
+                return encodeHeaderIndexSuccess;
+            }
 
-                        bytesWritten = integerLength + value.Length;
-                        return true;
-                    }
+            bool success = EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(name, value, destination, out bytesWritten);
+
+            if (success)
+            {
+                _dynamicTable.Insert(name, value);
+            }
+
+            return success;
+
+        }
+
+        public bool WriteHeadersBegin(Span<byte> destination, out int bytesWritten)
+        {
+            if (_headerTableSizeToConfirm.HasValue)
+            {
+                if (EncodeDynamicTableSizeUpdate(_headerTableSizeToConfirm.GetValueOrDefault(), destination, out bytesWritten))
+                {
+                    _headerTableSizeToConfirm = null;
+                    return true;
                 }
             }
 
@@ -189,6 +212,102 @@ namespace System.Net.Http.HPack
             {
                 destination[0] = 0x80;
                 return IntegerEncoder.Encode(index, 7, destination, out bytesWritten);
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+            // ------------------------------------------------------
+            //  0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | 0 | 1 |      Index (6+)       |
+            // +---+---+-----------------------+
+            // | H |     Value Length (7+)     |
+            // +---+---------------------------+
+            // | Value String (Length octets)  |
+            // +-------------------------------+
+
+            if ((uint)destination.Length >= 2)
+            {
+                destination[0] = 0x40;
+                if (IntegerEncoder.Encode(index, 6, destination, out int indexLength))
+                {
+                    Debug.Assert(indexLength >= 1);
+
+                    if (EncodeOctets(value, destination.Slice(indexLength), out int nameLength))
+                    {
+                        bytesWritten = indexLength + nameLength;
+                        return true;
+                    }
+                }
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, string value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+            // ------------------------------------------------------
+            //  0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | 0 | 1 |      Index (6+)       |
+            // +---+---+-----------------------+
+            // | H |     Value Length (7+)     |
+            // +---+---------------------------+
+            // | Value String (Length octets)  |
+            // +-------------------------------+
+
+            if ((uint)destination.Length >= 2)
+            {
+                destination[0] = 0x40;
+                if (IntegerEncoder.Encode(index, 6, destination, out int indexLength))
+                {
+                    Debug.Assert(indexLength >= 1);
+                    if (EncodeStringLiteral(value, destination.Slice(indexLength), out int nameLength))
+                    {
+                        bytesWritten = indexLength + nameLength;
+                        return true;
+                    }
+                }
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+            // ------------------------------------------------------
+            //      0   1   2   3   4   5   6   7
+            //    +---+---+---+---+---+---+---+---+
+            //    | 0 | 1 |           0           |
+            //    +---+---+-----------------------+
+            //    | H |     Name Length (7+)      |
+            //    +---+---------------------------+
+            //    |  Name String (Length octets)  |
+            //    +---+---------------------------+
+            //    | H |     Value Length (7+)     |
+            //    +---+---------------------------+
+            //    | Value String (Length octets)  |
+            //    +-------------------------------+
+
+            if ((uint)destination.Length >= 3)
+            {
+                destination[0] = 0x40;
+                if (EncodeOctets(name, destination.Slice(1), out int nameLength) &&
+                    EncodeOctets(value, destination.Slice(1 + nameLength), out int valueLength))
+                {
+                    bytesWritten = 1 + nameLength + valueLength;
+                    return true;
+                }
             }
 
             bytesWritten = 0;
@@ -231,7 +350,7 @@ namespace System.Net.Http.HPack
         /// Encodes a "Literal Header Field without Indexing", but only the index portion;
         /// a subsequent call to <see cref="EncodeStringLiteral"/> must be used to encode the associated value.
         /// </summary>
-        public static bool EncodeLiteralHeaderFieldWithoutIndexing(int index, Span<byte> destination, out int bytesWritten)
+        public static bool BeginEncodeLiteralHeaderFieldWithoutIndexing(int index, Span<byte> destination, out int bytesWritten)
         {
             // From https://tools.ietf.org/html/rfc7541#section-6.2.2
             // ------------------------------------------------------
@@ -283,7 +402,7 @@ namespace System.Net.Http.HPack
             if ((uint)destination.Length >= 3)
             {
                 destination[0] = 0;
-                if (EncodeLiteralHeaderName(name, destination.Slice(1), out int nameLength) &&
+                if (EncodeStringLiteral(name, destination.Slice(1), out int nameLength, lowercase: true, onlyAscii: true) &&
                     EncodeStringLiterals(values, separator, destination.Slice(1 + nameLength), out int valueLength))
                 {
                     bytesWritten = 1 + nameLength + valueLength;
@@ -299,7 +418,7 @@ namespace System.Net.Http.HPack
         /// Encodes a "Literal Header Field without Indexing - New Name", but only the name portion;
         /// a subsequent call to <see cref="EncodeStringLiteral"/> must be used to encode the associated value.
         /// </summary>
-        public static bool EncodeLiteralHeaderFieldWithoutIndexingNewName(string name, Span<byte> destination, out int bytesWritten)
+        public static bool BeginEncodeLiteralHeaderFieldWithoutIndexingNewName(string name, Span<byte> destination, out int bytesWritten)
         {
             // From https://tools.ietf.org/html/rfc7541#section-6.2.2
             // ------------------------------------------------------
@@ -322,7 +441,7 @@ namespace System.Net.Http.HPack
             if ((uint)destination.Length >= 2)
             {
                 destination[0] = 0;
-                if (EncodeLiteralHeaderName(name, destination.Slice(1), out int nameLength))
+                if (EncodeStringLiteral(name, destination.Slice(1), out int nameLength, lowercase: true, onlyAscii: true))
                 {
                     bytesWritten = 1 + nameLength;
                     return true;
@@ -333,56 +452,18 @@ namespace System.Net.Http.HPack
             return false;
         }
 
-        private static bool EncodeLiteralHeaderName(string value, Span<byte> destination, out int bytesWritten)
-        {
-            // From https://tools.ietf.org/html/rfc7541#section-5.2
-            // ------------------------------------------------------
-            //   0   1   2   3   4   5   6   7
-            // +---+---+---+---+---+---+---+---+
-            // | H |    String Length (7+)     |
-            // +---+---------------------------+
-            // |  String Data (Length octets)  |
-            // +-------------------------------+
-
-            if (destination.Length != 0)
-            {
-                destination[0] = 0; // TODO: Use Huffman encoding
-                if (IntegerEncoder.Encode(value.Length, 7, destination, out int integerLength))
-                {
-                    Debug.Assert(integerLength >= 1);
-
-                    destination = destination.Slice(integerLength);
-                    if (value.Length <= destination.Length)
-                    {
-                        for (int i = 0; i < value.Length; i++)
-                        {
-                            char c = value[i];
-                            destination[i] = (byte)((uint)(c - 'A') <= ('Z' - 'A') ? c | 0x20 : c);
-                        }
-
-                        bytesWritten = integerLength + value.Length;
-                        return true;
-                    }
-                }
-            }
-
-            bytesWritten = 0;
-            return false;
-        }
-
-        private static bool EncodeStringLiteralValue(string value, Span<byte> destination, out int bytesWritten)
+        private static bool EncodeStringLiteralValue(ReadOnlySpan<char> value, Span<byte> destination, out int bytesWritten, bool lowercase = false, bool onlyAscii = false)
         {
             if (value.Length <= destination.Length)
             {
                 for (int i = 0; i < value.Length; i++)
                 {
                     char c = value[i];
-                    if ((c & 0xFF80) != 0)
+                    if (onlyAscii && (c & 0xFF80) != 0)
                     {
-                        throw new HttpRequestException(SR.net_http_request_invalid_char_encoding);
+                        throw new HPackEncodingException(SR.net_http_request_invalid_char_encoding);
                     }
-
-                    destination[i] = (byte)c;
+                    destination[i] = (byte)(lowercase && (uint)(c - 'A') <= ('Z' - 'A') ? c | 0x20 : c);
                 }
 
                 bytesWritten = value.Length;
@@ -393,7 +474,37 @@ namespace System.Net.Http.HPack
             return false;
         }
 
-        public static bool EncodeStringLiteral(string value, Span<byte> destination, out int bytesWritten)
+        public static bool EncodeStringLiteral(string value, Span<byte> destination, out int bytesWritten, bool lowercase = false, bool onlyAscii = false)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-5.2
+            // ------------------------------------------------------
+            //   0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | H |    String Length (7+)     |
+            // +---+---------------------------+
+            // |      Data (Length octets)     |
+            // +-------------------------------+
+
+            if (destination.Length != 0)
+            {
+                destination[0] = 0; // TODO: Use Huffman encoding
+                if (IntegerEncoder.Encode(value.Length, 7, destination, out int integerLength))
+                {
+                    Debug.Assert(integerLength >= 1);
+
+                    if (EncodeStringLiteralValue(value, destination.Slice(integerLength), out int valueLength, lowercase, onlyAscii))
+                    {
+                        bytesWritten = integerLength + valueLength;
+                        return true;
+                    }
+                }
+            }
+
+            bytesWritten = 0;
+            return false;
+        }
+
+        public static bool EncodeOctets(ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
         {
             // From https://tools.ietf.org/html/rfc7541#section-5.2
             // ------------------------------------------------------
@@ -411,9 +522,9 @@ namespace System.Net.Http.HPack
                 {
                     Debug.Assert(integerLength >= 1);
 
-                    if (EncodeStringLiteralValue(value, destination.Slice(integerLength), out int valueLength))
+                    if (value.TryCopyTo(destination.Slice(integerLength)))
                     {
-                        bytesWritten = integerLength + valueLength;
+                        bytesWritten = integerLength + value.Length;
                         return true;
                     }
                 }
@@ -421,6 +532,32 @@ namespace System.Net.Http.HPack
 
             bytesWritten = 0;
             return false;
+        }
+
+
+        private static bool EncodeDynamicTableSizeUpdate(uint value, Span<byte> destination, out int bytesWritten)
+        {
+            // From https://tools.ietf.org/html/rfc7541#section-6.3
+            // ------------------------------------------------------
+            //   0   1   2   3   4   5   6   7
+            // +---+---+---+---+---+---+---+---+
+            // | 0 | 0 | 1 |   Max size (5+)   |
+            // +---+---------------------------+
+
+            if (destination.Length != 0)
+            {
+                destination[0] = 0x20;
+                if (IntegerEncoder.Encode((int)value, 5, destination, out int integerLength))
+                {
+                    Debug.Assert(integerLength >= 1);
+                    bytesWritten = integerLength;
+                    return true;
+                }
+            }
+
+            bytesWritten = 0;
+            return false;
+
         }
 
         public static bool EncodeStringLiterals(ReadOnlySpan<string> values, string separator, Span<byte> destination, out int bytesWritten)
@@ -479,30 +616,6 @@ namespace System.Net.Http.HPack
             return false;
         }
 
-        /// <summary>
-        /// Encodes a "Literal Header Field without Indexing" to a new array, but only the index portion;
-        /// a subsequent call to <see cref="EncodeStringLiteral"/> must be used to encode the associated value.
-        /// </summary>
-        public static byte[] EncodeLiteralHeaderFieldWithoutIndexingToAllocatedArray(int index)
-        {
-            Span<byte> span = stackalloc byte[256];
-            bool success = EncodeLiteralHeaderFieldWithoutIndexing(index, span, out int length);
-            Debug.Assert(success, $"Stack-allocated space was too small for index '{index}'.");
-            return span.Slice(0, length).ToArray();
-        }
-
-        /// <summary>
-        /// Encodes a "Literal Header Field without Indexing - New Name" to a new array, but only the name portion;
-        /// a subsequent call to <see cref="EncodeStringLiteral"/> must be used to encode the associated value.
-        /// </summary>
-        public static byte[] EncodeLiteralHeaderFieldWithoutIndexingNewNameToAllocatedArray(string name)
-        {
-            Span<byte> span = stackalloc byte[256];
-            bool success = EncodeLiteralHeaderFieldWithoutIndexingNewName(name, span, out int length);
-            Debug.Assert(success, $"Stack-allocated space was too small for \"{name}\".");
-            return span.Slice(0, length).ToArray();
-        }
-
         /// <summary>Encodes a "Literal Header Field without Indexing" to a new array.</summary>
         public static byte[] EncodeLiteralHeaderFieldWithoutIndexingToAllocatedArray(int index, string value)
         {
@@ -524,6 +637,20 @@ namespace System.Net.Http.HPack
                 // the code with ArrayPool usage.  In practice we should never hit this,
                 // as hostnames should be <= 255 characters.
                 span = new byte[span.Length * 2];
+            }
+        }
+
+        public void SetDynamicHeaderTableSize(uint size)
+        {
+            if (size > _maxDynamicTableSize)
+            {
+                throw new HPackEncodingException(SR.Format(SR.net_http_hpack_exceded_dynamic_table_size_update, size, _maxDynamicTableSize));
+            }
+
+            if (!_headerTableSizeToConfirm.HasValue || size < _headerTableSizeToConfirm)
+            {
+                _headerTableSizeToConfirm = size;
+                _dynamicTable.Resize((int)size);
             }
         }
     }

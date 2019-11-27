@@ -19,6 +19,66 @@ namespace System.Net.Http.HPack
             _maxSize = maxSize;
         }
 
+        public HeaderTableIndex GetIndex(byte[] name, byte[] value)
+        {
+            int? headerIndex = null;
+            int? headerValueIndex = null;
+            for (int i = 0; i < _count; i++)
+            {
+                HeaderField header = _buffer[(i + _removeIndex) % _buffer.Length];
+                if (NamesEquals(header.Name, name))
+                {
+                    headerIndex ??= getIndex(i);
+                    if (ValuesEquals(header.Value, value))
+                    {
+                        headerValueIndex = getIndex(i);
+                        break;
+                    }
+                }
+            }
+
+            return new HeaderTableIndex(headerIndex, headerValueIndex);
+
+            int getIndex(int bufferPosition)
+            {
+                int circularBufferCorrection = _insertIndex < bufferPosition ? _buffer.Length : 0;
+                return _count + bufferPosition - _insertIndex - circularBufferCorrection + 1;
+            };
+
+            static bool NamesEquals(byte[] name1, byte[] name2)
+            {
+                if (ReferenceEquals(name1, name2))
+                    return true;
+
+
+                if (name1 == null || name2 == null)
+                    return false;
+
+
+                if (name1.Length != name2.Length)
+                    return false;
+
+
+                for (int i = 0; i < name1.Length; i++)
+                {
+                    if (name1[i] != name2[i])
+                        return false;
+                }
+
+                return true;
+            }
+
+            static bool ValuesEquals(byte[] value1, byte[] value2)
+            {
+                if (value1?.Length == 0)
+                {
+                    return true;
+                }
+
+                return NamesEquals(value1, value2);
+            }
+        }
+
         public int Count => _count;
 
         public int Size => _size;
@@ -46,6 +106,11 @@ namespace System.Net.Http.HPack
             }
         }
 
+        public void Insert(int index, ReadOnlySpan<byte> value)
+        {
+            Insert(this[index - 1].Name, value);
+        }
+
         public void Insert(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
         {
             int entryLength = HeaderField.GetLength(name.Length, value.Length);
@@ -61,10 +126,13 @@ namespace System.Net.Http.HPack
             }
 
             var entry = new HeaderField(name, value);
+
             _buffer[_insertIndex] = entry;
             _insertIndex = (_insertIndex + 1) % _buffer.Length;
             _size += entry.Length;
             _count++;
+
+            return;
         }
 
         public void Resize(int maxSize)

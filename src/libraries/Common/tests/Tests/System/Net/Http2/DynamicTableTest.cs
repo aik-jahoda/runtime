@@ -226,6 +226,60 @@ namespace System.Net.Http.Unit.Tests.HPack
             VerifyTableEntries(dynamicTable, _header2);
         }
 
+        [Fact]
+        public void DynamicTable_GetUknownValueIndex()
+        {
+            DynamicTable dynamicTable = new DynamicTable(4096);
+            dynamicTable.Insert(_header1.Name, _header1.Value);
+            dynamicTable.Insert(_header2.Name, _header2.Value);
+
+            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("unknown-header"), Encoding.ASCII.GetBytes("unknown-value"));
+
+            Assert.Null(index.HeaderIndex);
+            Assert.Null(index.HeaderWithValueIndex);
+        }
+
+        [Fact]
+        public void DynamicTable_GetIndexFromEmptyTable()
+        {
+            DynamicTable dynamicTable = new DynamicTable(4096);
+
+            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("unknown-header"), Encoding.ASCII.GetBytes("unknown-value"));
+
+            Assert.Null(index.HeaderIndex);
+            Assert.Null(index.HeaderWithValueIndex);
+        }
+
+        [Fact]
+        public void DynamicTable_GetKnownHeaderNameIndex()
+        {
+            DynamicTable dynamicTable = new DynamicTable(_header2.Length);
+
+            dynamicTable.Insert(_header1.Name, _header1.Value);
+            // Only header2 is in the dynamic table because of the size.
+            dynamicTable.Insert(_header2.Name, _header2.Value);
+            VerifyTableEntries(dynamicTable, _header2);
+
+            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("header-02"), Encoding.ASCII.GetBytes("unknown-value"));
+
+            Assert.Equal(2, index.HeaderIndex);
+            Assert.Null(index.HeaderWithValueIndex);
+        }
+
+        [Fact]
+        public void DynamicTable_GetKnownHeaderNameAndValueIndex()
+        {
+            DynamicTable dynamicTable = new DynamicTable(4096);
+
+            dynamicTable.Insert(_header1.Name, _header1.Value);
+            dynamicTable.Insert(_header2.Name, _header2.Value);
+
+            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("header-02"), Encoding.ASCII.GetBytes("value_2"));
+
+            Assert.Equal(2, index.HeaderIndex);
+            Assert.Equal(2, index.HeaderIndex);
+        }
+
         public static IEnumerable<object[]> CreateResizeData()
         {
             int[] values = new[] { 128, 256, 384, 512 };
