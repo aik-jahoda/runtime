@@ -182,10 +182,13 @@ namespace System.Net.Http.HPack
                     _headerTableSizeToConfirm = null;
                     return true;
                 }
+
+                bytesWritten = 0;
+                return false;
             }
 
             bytesWritten = 0;
-            return false;
+            return true;
         }
 
         // Things we should add:
