@@ -1,0 +1,1 @@
+dotnet run --no-build -c $CONFIGURATION -- $HTTPSTRESS_ARGS #& sleep 10 && curl -v --insecure --output - https://localhost:5001; echo $?; sleep 10

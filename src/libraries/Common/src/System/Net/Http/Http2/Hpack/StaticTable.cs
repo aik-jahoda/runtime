@@ -26,7 +26,6 @@ namespace System.Net.Http.HPack
         public static HeaderField Get(int index) => s_staticDecoderTable[index];
 
         public static IReadOnlyDictionary<int, int> StatusIndex => s_statusIndex;
-
         private static readonly HeaderField[] s_staticDecoderTable = new HeaderField[]
         {
             CreateHeaderField(":authority", ""),

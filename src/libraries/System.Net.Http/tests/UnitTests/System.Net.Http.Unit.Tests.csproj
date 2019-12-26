@@ -461,6 +461,9 @@
     <Compile Include="$(CommonPath)System\Net\Http\Http2\Hpack\HeaderField.cs">
       <Link>Common\System\Net\Http\Http2\Hpack\HeaderField.cs</Link>
     </Compile>
+    <Compile Include="$(CommonPath)System\Net\Http\Http2\Hpack\HeaderTableIndex.cs">
+      <Link>Common\System\Net\Http\Http2\Hpack\HeaderTableIndex.cs</Link>
+    </Compile>
     <Compile Include="$(CommonPath)System\Net\Http\Http2\Hpack\HPackDecoder.cs">
       <Link>Common\System\Net\Http\Http2\Hpack\HPackDecoder.cs</Link>
     </Compile>

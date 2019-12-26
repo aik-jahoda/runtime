@@ -33,6 +33,8 @@ namespace System.Net.Http
 
         private readonly HPackDecoder _hpackDecoder;
 
+        private readonly HPackEncoder _hpackEncoder;
+
         private readonly Dictionary<int, Http2Stream> _httpStreams;
 
         private readonly SemaphoreSlim _writerLock;
@@ -109,6 +111,8 @@ namespace System.Net.Http
             _headerBuffer = new ArrayBuffer(InitialConnectionBufferSize);
 
             _hpackDecoder = new HPackDecoder(maxHeadersLength: pool.Settings._maxResponseHeadersLength * 1024);
+
+            _hpackEncoder = new HPackEncoder();
 
             _httpStreams = new Dictionary<int, Http2Stream>();
 
@@ -485,6 +489,21 @@ namespace System.Net.Http
                                 throw new Http2ConnectionException(Http2ProtocolErrorCode.ProtocolError);
                             }
 
+                            // We don't actually store this value; we always send frames of the minimum size (16K).
+                            break;
+                        case SettingId.HeaderTableSize:
+                            if (settingValue < 0)
+                            {
+                                throw new Http2ConnectionException(Http2ProtocolErrorCode.ProtocolError);
+                            }
+                            try
+                            {
+                                _hpackEncoder.SetDynamicHeaderTableSize(settingValue);
+                            }
+                            catch (HPackEncodingException)
+                            {
+                                throw new Http2ConnectionException(Http2ProtocolErrorCode.CompressionError);
+                            }
                             // We don't actually store this value; we always send frames of the minimum size (16K).
                             break;
 
@@ -942,6 +961,18 @@ namespace System.Net.Http
             _headerBuffer.Commit(bytes.Length);
         }
 
+
+        private void WriteHeadersBegin()
+        {
+            int bytesWritten;
+            while (!_hpackEncoder.WriteHeadersBegin(_headerBuffer.AvailableSpan, out bytesWritten))
+            {
+                _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
+            }
+
+            _headerBuffer.Commit(bytesWritten);
+        }
+
         private void WriteHeaderCollection(HttpHeaders headers)
         {
             if (NetEventSource.IsEnabled) Trace("");
@@ -965,23 +996,24 @@ namespace System.Net.Http
                     // The Connection, Upgrade and ProxyConnection headers are also not supported in HTTP2.
                     if (knownHeader != KnownHeaders.Host && knownHeader != KnownHeaders.Connection && knownHeader != KnownHeaders.Upgrade && knownHeader != KnownHeaders.ProxyConnection)
                     {
-                        if (header.Key.KnownHeader == KnownHeaders.TE)
+                        if (knownHeader == KnownHeaders.TE)
                         {
                             // HTTP/2 allows only 'trailers' TE header. rfc7540 8.1.2.2
                             foreach (string value in headerValues)
                             {
                                 if (string.Equals(value, "trailers", StringComparison.OrdinalIgnoreCase))
                                 {
-                                    WriteBytes(knownHeader.Http2EncodedName);
-                                    WriteLiteralHeaderValue(value);
+                                    WriteHeader(knownHeader, value);
                                     break;
                                 }
                             }
                             continue;
                         }
 
+
+
                         // For all other known headers, send them via their pre-encoded name and the associated value.
-                        WriteBytes(knownHeader.Http2EncodedName);
+                        BeginWriteHeader(knownHeader);
                         string separator = null;
                         if (headerValues.Length > 1)
                         {
@@ -1007,6 +1039,82 @@ namespace System.Net.Http
             }
         }
 
+        private void WriteHeader(KnownHeader knownHeader, string value)
+        {
+            if (NetEventSource.IsEnabled)
+            {
+                Trace($"{nameof(value)}={value}");
+                Trace($"{nameof(knownHeader)}={knownHeader.Name}");
+            }
+
+            if (knownHeader.Http2StaticTableIndex != null)
+            {
+                int bytesWritten;
+
+                HeaderTableIndex index = new HeaderTableIndex(knownHeader.Http2StaticTableIndex.GetValueOrDefault(), null);
+
+                // Todo: remove conversion to bytes.
+                while (!_hpackEncoder.EncodeLiteralField(index, Encoding.ASCII.GetBytes(knownHeader.Name), Encoding.ASCII.GetBytes(value), _headerBuffer.AvailableSpan, out bytesWritten))
+                {
+                    _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
+                }
+                _headerBuffer.Commit(bytesWritten);
+            }
+            else
+            {
+                WriteHeader(knownHeader.Name, value);
+            }
+        }
+
+        private void BeginWriteHeader(KnownHeader knownHeader)
+        {
+            if (NetEventSource.IsEnabled)
+            {
+                Trace($"{nameof(knownHeader)}={knownHeader.Name}");
+            }
+
+            if (knownHeader.Http2StaticTableIndex != null)
+            {
+                int bytesWritten;
+
+                // todo Dynamic table
+                while (!HPackEncoder.BeginEncodeLiteralHeaderFieldWithoutIndexing(knownHeader.Http2StaticTableIndex.GetValueOrDefault(), _headerBuffer.AvailableSpan, out bytesWritten))
+                {
+                    _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
+                }
+                _headerBuffer.Commit(bytesWritten);
+            }
+            else
+            {
+                int bytesWritten;
+
+                while (!HPackEncoder.BeginEncodeLiteralHeaderFieldWithoutIndexingNewName(knownHeader.Name, _headerBuffer.AvailableSpan, out bytesWritten))
+                {
+                    _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
+                }
+                _headerBuffer.Commit(bytesWritten);
+            }
+        }
+
+        private void WriteHeader(string name, string value)
+        {
+            // TODO: do we need this conversion?
+            byte[] rawValue = Text.Encoding.UTF8.GetBytes(value);
+            byte[] rawName = Text.Encoding.UTF8.GetBytes(name);
+
+            HeaderTableIndex headerIndex = _hpackEncoder.GetIndex(rawName, rawValue);
+
+            int bytesWritten;
+
+            while (!_hpackEncoder.EncodeLiteralField(headerIndex, rawName, rawValue, _headerBuffer.AvailableSpan, out bytesWritten))
+            {
+                _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
+            }
+            _headerBuffer.Commit(bytesWritten);
+        }
+
+
+
         private void WriteHeaders(HttpRequestMessage request)
         {
             if (NetEventSource.IsEnabled) Trace("");
@@ -1016,6 +1124,8 @@ namespace System.Net.Http
             request.Headers.TransferEncodingChunked = false;
 
             HttpMethod normalizedMethod = HttpMethod.Normalize(request.Method);
+
+            WriteHeadersBegin();
 
             // Method is normalized so we can do reference equality here.
             if (ReferenceEquals(normalizedMethod, HttpMethod.Get))
@@ -1039,6 +1149,7 @@ namespace System.Net.Http
             }
             else
             {
+                // TODO: this should use dynamic table
                 WriteBytes(_pool._encodedAuthorityHostHeader);
             }
 
@@ -1063,8 +1174,7 @@ namespace System.Net.Http
                 string cookiesFromContainer = _pool.Settings._cookieContainer.GetCookieHeader(request.RequestUri);
                 if (cookiesFromContainer != string.Empty)
                 {
-                    WriteBytes(KnownHeaders.Cookie.Http2EncodedName);
-                    WriteLiteralHeaderValue(cookiesFromContainer);
+                    WriteHeader(KnownHeaders.Cookie, cookiesFromContainer);
                 }
             }
 
@@ -1074,8 +1184,7 @@ namespace System.Net.Http
                 // unless this is a method that never has a body.
                 if (normalizedMethod.MustHaveRequestBody)
                 {
-                    WriteBytes(KnownHeaders.ContentLength.Http2EncodedName);
-                    WriteLiteralHeaderValue("0");
+                    WriteHeader(KnownHeaders.ContentLength, "0");
                 }
             }
             else
@@ -1614,13 +1723,13 @@ namespace System.Net.Http
 
             // Some frame types define bits differently.  Define them all here for simplicity.
 
-            EndStream =     0b00000001,
-            Ack =           0b00000001,
-            EndHeaders =    0b00000100,
-            Padded =        0b00001000,
-            Priority =      0b00100000,
+            EndStream = 0b00000001,
+            Ack = 0b00000001,
+            EndHeaders = 0b00000100,
+            Padded = 0b00001000,
+            Priority = 0b00100000,
 
-            ValidBits =     0b00101101
+            ValidBits = 0b00101101
         }
 
         private enum SettingId : ushort

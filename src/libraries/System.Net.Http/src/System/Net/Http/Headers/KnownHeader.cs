@@ -29,9 +29,8 @@ namespace System.Net.Http.Headers
             Parser = parser;
             KnownValues = knownValues;
 
-            Http2EncodedName = http2StaticTableIndex.HasValue ?
-                HPackEncoder.EncodeLiteralHeaderFieldWithoutIndexingToAllocatedArray(http2StaticTableIndex.GetValueOrDefault()) :
-                HPackEncoder.EncodeLiteralHeaderFieldWithoutIndexingNewNameToAllocatedArray(name);
+
+            Http2StaticTableIndex = http2StaticTableIndex;
 
             var asciiBytesWithColonSpace = new byte[name.Length + 2]; // + 2 for ':' and ' '
             int asciiBytes = Encoding.ASCII.GetBytes(name, asciiBytesWithColonSpace);
@@ -47,6 +46,6 @@ namespace System.Net.Http.Headers
         public string[] KnownValues { get; }
         public byte[] AsciiBytesWithColonSpace { get; }
         public HeaderDescriptor Descriptor => new HeaderDescriptor(this);
-        public byte[] Http2EncodedName { get; }
+        public int? Http2StaticTableIndex { get; }
     }
 }
