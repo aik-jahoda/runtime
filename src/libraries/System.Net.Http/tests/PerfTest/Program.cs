@@ -35,7 +35,6 @@ public static class Program
     private static bool TryParseCli(string[] args, [NotNullWhen(true)] out Configuration? config)
     {
         var cmd = new RootCommand();
-        cmd.AddOption(new Option("-n", "Max number of requests to make concurrently.") { Argument = new Argument<int>("numWorkers", Environment.ProcessorCount) });
         cmd.AddOption(new Option("-serverUri", "Stress suite server uri.") { Argument = new Argument<string>("serverUri", "https://localhost:5001") });
         cmd.AddOption(new Option("-runMode", "Stress suite execution mode. Defaults to Both.") { Argument = new Argument<RunMode>("runMode", RunMode.both) });
         cmd.AddOption(new Option("-maxExecutionTime", "Maximum stress execution time, in minutes. Defaults to infinity.") { Argument = new Argument<double?>("minutes", null) });
@@ -52,7 +51,6 @@ public static class Program
         cmd.AddOption(new Option("-listOps", "List available options.") { Argument = new Argument<bool>("enable", false) });
         cmd.AddOption(new Option("-seed", "Seed for generating pseudo-random parameters for a given -n argument.") { Argument = new Argument<int?>("seed", null) });
         cmd.AddOption(new Option("-numParameters", "Max number of query parameters or form fields for a request.") { Argument = new Argument<int>("queryParameters", 1) });
-        cmd.AddOption(new Option("-cancelRate", "Number between 0 and 1 indicating rate of client-side request cancellation attempts. Defaults to 0.1.") { Argument = new Argument<double>("probability", 0.1) });
         cmd.AddOption(new Option("-httpSys", "Use http.sys instead of Kestrel.") { Argument = new Argument<bool>("enable", false) });
         cmd.AddOption(new Option("-winHttp", "Use WinHttpHandler for the stress client.") { Argument = new Argument<bool>("enable", false) });
         cmd.AddOption(new Option("-displayInterval", "Client stats display interval in seconds. Defaults to 5 seconds.") { Argument = new Argument<int>("seconds", 5) });
@@ -83,7 +81,6 @@ public static class Program
 
             HttpVersion = cmdline.ValueForOption<Version>("-http"),
             UseWinHttpHandler = cmdline.ValueForOption<bool>("-winHttp"),
-            ConcurrentRequests = cmdline.ValueForOption<int>("-n"),
             RandomSeed = cmdline.ValueForOption<int?>("-seed") ?? new Random().Next(),
             MaxContentLength = cmdline.ValueForOption<int>("-maxContentLength"),
             MaxRequestUriSize = cmdline.ValueForOption<int>("-maxRequestUriSize"),
@@ -95,7 +92,6 @@ public static class Program
             DisplayInterval = TimeSpan.FromSeconds(cmdline.ValueForOption<int>("-displayInterval")),
             DefaultTimeout = TimeSpan.FromSeconds(cmdline.ValueForOption<int>("-clientTimeout")),
             ConnectionLifetime = cmdline.ValueForOption<double?>("-connectionLifetime").Select(TimeSpan.FromMilliseconds),
-            CancellationProbability = Math.Max(0, Math.Min(1, cmdline.ValueForOption<double>("-cancelRate"))),
             MaximumExecutionTime = cmdline.ValueForOption<double?>("-maxExecutionTime").Select(TimeSpan.FromMinutes),
 
             UseHttpSys = cmdline.ValueForOption<bool>("-httpSys"),
@@ -188,15 +184,11 @@ public static class Program
         if (config.RunMode.HasFlag(RunMode.client))
         {
             // Start the client.
-            Console.WriteLine($"Starting {config.ConcurrentRequests} client workers.");
-
             client = new StressClient(usedClientOperations, config);
             tasks.Add(client.Start());
         }
         tasks.Add(WaitUntilMaxExecutionTimeElapsedOrKeyboardInterrupt(config.MaximumExecutionTime));
         Task.WaitAny(tasks.ToArray());
-
-        client?.PrintFinalReport();
 
         // return nonzero status code if there are stress errors
         return ExitCode.Success;

@@ -60,32 +60,6 @@ namespace HttpStress
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(_globalToken, token.Value);
                 return WithVersionValidation(await _client.SendAsync(request, httpCompletion, cts.Token));
             }
-            else if (GetRandomBoolean(_config.CancellationProbability))
-            {
-                // trigger a random cancellation
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(_globalToken);
-
-                Task<HttpResponseMessage> task = _client.SendAsync(request, httpCompletion, cts.Token);
-
-                // either spinwait or delay before triggering cancellation
-                if (GetRandomBoolean(probability: 0.66))
-                {
-                    // bound spinning to 100 us
-                    double spinTimeMs = 0.1 * _random.NextDouble();
-                    Stopwatch sw = Stopwatch.StartNew();
-                    do { Thread.SpinWait(10); } while (!task.IsCompleted && sw.Elapsed.TotalMilliseconds < spinTimeMs);
-                }
-                else
-                {
-                    // 60ms is the 99th percentile when
-                    // running the stress suite locally under default load
-                    await Task.WhenAny(task, Task.Delay(_random.Next(0, 60), cts.Token));
-                }
-
-                cts.Cancel();
-                IsCancellationRequested = true;
-                return WithVersionValidation(await task);
-            }
             else
             {
                 // no cancellation
@@ -182,7 +156,7 @@ namespace HttpStress
         public static (string name, int requestsCount, Func<RequestContext, int, Task> operation)[] Operations =>
             new (string, int, Func<RequestContext, int, Task>)[]
             {
-                ("GET", 10_000,
+                ("GET", 100_000,
                 async (ctx, _)  =>
                 {
                     using var req = new HttpRequestMessage(HttpMethod.Get, "/");
@@ -206,7 +180,7 @@ namespace HttpStress
                 //     }
                 // }),
 
-                ("GET Static Headers", 10_000,
+                ("GET Static Headers", 100_000,
                 async (ctx, _) =>
                 {
                     using var req = new HttpRequestMessage(HttpMethod.Get, "/");
@@ -220,7 +194,7 @@ namespace HttpStress
                     using HttpResponseMessage m = await ctx.SendAsync(req);
                 }),
 
-                ("GET Static unlimited Headers", 10_000,
+                ("GET Static unlimited Headers", 100_000,
                 async (ctx, requestNumber) =>
                 {
                     using var req = new HttpRequestMessage(HttpMethod.Get, "/");
@@ -234,7 +208,7 @@ namespace HttpStress
                     using HttpResponseMessage m = await ctx.SendAsync(req);
                 }),
 
-                ("GET Random Headers",10_000,
+                ("GET Random Headers",100_000,
                 async (ctx, _) =>
                 {
                     using var req = new HttpRequestMessage(HttpMethod.Get, "/");

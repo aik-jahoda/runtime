@@ -54,18 +54,6 @@ namespace HttpStress
             _cts.Dispose();
         }
 
-        public void PrintFinalReport()
-        {
-            lock (Console.Out)
-            {
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine("HttpStress Run Final Report");
-                Console.WriteLine();
-
-                _aggregator.PrintCurrentResults(_stopwatch.Elapsed);
-            }
-        }
-
         public void Dispose() => Stop();
 
         private async Task StartCore()
@@ -126,6 +114,7 @@ namespace HttpStress
                     if (_cts.IsCancellationRequested)
                         break;
 
+                    GC.Collect();
                     for (int j = 0; j < requestsCount; j++)
                     {
                         if (_cts.IsCancellationRequested)
@@ -199,63 +188,30 @@ namespace HttpStress
                 _latencies[operationIndex][requestIndex] = elapsed.TotalMilliseconds;
             }
 
-            public void PrintCurrentResults(TimeSpan runtime)
-            {
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.Write("[" + DateTime.Now + "]");
-                Console.ResetColor();
-
-                if (_lastTotal == _totalRequests)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                }
-                _lastTotal = _totalRequests;
-                Console.Write(" Total: " + _totalRequests.ToString("N0"));
-                Console.ResetColor();
-                Console.WriteLine($" Runtime: " + runtime.ToString(@"hh\:mm\:ss"));
-
-                for (int i = 0; i < _operationNames.Length; i++)
-                {
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.Write($"\t{_operationNames[i].PadRight(30)}");
-                    Console.ResetColor();
-                    Console.ForegroundColor = ConsoleColor.Green;
-                    Console.Write("Success: ");
-                    Console.Write(_successes[i].ToString("N0"));
-                    Console.ResetColor();
-                }
-
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.Write("\t    TOTAL".PadRight(31));
-                Console.ResetColor();
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write("Success: ");
-                Console.Write(_successes.Sum().ToString("N0"));
-                Console.ResetColor();
-
-            }
-
             public void PrintLatenciesForOperation(int operationIndex)
             {
                 double[] latencies = _latencies[operationIndex];
                 Array.Sort(latencies);
 
-                Console.WriteLine($"Latency(ms): \t n={latencies.Length},\tp50={Pc(0.5)},\tp75={Pc(0.75)},\tp99={Pc(0.99)},\tp999={Pc(0.999)},\tmax={Pc(1)}\t {_operationNames[operationIndex]}");
+                Console.WriteLine($"Latency(ms): \t n={latencies.Length},\tp50={Pc(0.5),6:F3},\tp75={Pc(0.75),6:F3},\tp99={Pc(0.99),6:F3},\tp999={Pc(0.999),6:F3},\tmax={Pc(1),6:N3}\t {_operationNames[operationIndex]}");
+                
+                int twentyPercent = (int)(latencies.Length*0.2);
+                Console.WriteLine($"Latency(ms): \t n={latencies.Length},\tp50={(latencies.Skip(twentyPercent).Take(latencies.Length - 2 * twentyPercent).Sum() / latencies.Length),6:F3}");
+
+
 
                 double Pc(double percentile)
                 {
                     int N = latencies.Length;
                     double n = (N - 1) * percentile + 1;
-                    if (n == 1) return Rnd(latencies[0]);
-                    else if (n == N) return Rnd(latencies[N - 1]);
+                    if (n == 1) return latencies[0];
+                    else if (n == N) return latencies[N - 1];
                     else
                     {
                         int k = (int)n;
                         double d = n - k;
-                        return Rnd(latencies[k - 1] + d * (latencies[k] - latencies[k - 1]));
+                        return latencies[k - 1] + d * (latencies[k] - latencies[k - 1]);
                     }
-
-                    static double Rnd(double value) => Math.Round(value, 2);
                 }
             }
         }

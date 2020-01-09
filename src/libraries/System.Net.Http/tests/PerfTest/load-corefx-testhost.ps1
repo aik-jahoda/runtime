@@ -88,13 +88,15 @@ function Copy-Aspnetcore-Bits([string] $testhost_path)
             (Get-ChildItem -Directory "$path" `
             | Select-Object -ExpandProperty Fullname `
             | Split-Path -Leaf `
-            | ForEach-Object{[System.Version]$_} `
+            | ForEach-Object{ @{ version= [System.Version]$_.Split("-")[0]; text=$_}} `
             | Sort-Object -Descending `
-            | Select-Object -First 1).ToString()
+            | Select-Object -First 1).text.ToString()
         }
         
         $netfx_runtime_version=$(get-most-recent-version "$testhost_path/shared/$netfx_bits_folder")
         $aspnet_runtime_version=$(get-most-recent-version "$bootstrap_sdk/shared/$aspnet_bits_folder")
+
+        Write-Output $aspnet_runtime_version
 
         # copy the bits
         mkdir -p "$testhost_path/shared/$aspnet_bits_folder/" > $null
