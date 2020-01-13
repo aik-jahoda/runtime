@@ -126,15 +126,6 @@ public static class Program
             return ExitCode.CliError;
         }
 
-        if (config.ListOperations)
-        {
-            for (int i = 0; i < clientOperations.Length; i++)
-            {
-                Console.WriteLine(clientOperations[i].name);
-            }
-            return ExitCode.Success;
-        }
-
         // derive client operations based on arguments
         (string name, int requestsCount, Func<RequestContext, int, Task> op)[] usedClientOperations = (config.OpIndices, config.ExcludedOpIndices) switch
         {
@@ -157,13 +148,11 @@ public static class Program
         Console.WriteLine("      Server URL: " + config.ServerUri);
         Console.WriteLine("         Tracing: " + (config.LogPath == null ? (object)false : config.LogPath.Length == 0 ? (object)true : config.LogPath));
         Console.WriteLine("     ASP.NET Log: " + config.LogAspNet);
-        Console.WriteLine("     Concurrency: " + config.ConcurrentRequests);
         Console.WriteLine("  Content Length: " + config.MaxContentLength);
         Console.WriteLine("   HTTP2 Version: " + config.HttpVersion);
         Console.WriteLine("        Lifetime: " + (config.ConnectionLifetime.HasValue ? $"{config.ConnectionLifetime.Value.TotalMilliseconds}ms" : "(infinite)"));
         Console.WriteLine("      Operations: " + string.Join(", ", usedClientOperations.Select(o => o.name)));
         Console.WriteLine("     Random Seed: " + config.RandomSeed);
-        Console.WriteLine("    Cancellation: " + 100 * config.CancellationProbability + "%");
         Console.WriteLine("Max Content Size: " + config.MaxContentLength);
         Console.WriteLine("Query Parameters: " + config.MaxParameters);
         Console.WriteLine();

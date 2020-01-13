@@ -1034,7 +1034,10 @@ namespace System.Net.Http
                 else
                 {
                     // The header is not known: fall back to just encoding the header name and value(s).
-                    WriteLiteralHeader(header.Key.Name, headerValues);
+                    if (headerValues.Length == 1)
+                        WriteHeader(header.Key.Name, headerValues[0]);
+                    else
+                        WriteLiteralHeader(header.Key.Name, headerValues);
                 }
             }
         }
