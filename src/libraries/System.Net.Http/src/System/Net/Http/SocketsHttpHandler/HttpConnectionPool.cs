@@ -142,6 +142,7 @@ namespace System.Net.Http
                 Debug.Assert(Encoding.ASCII.GetString(_hostHeaderValueBytes) == hostHeader);
                 if (sslHostName == null)
                 {
+                    // TODO: use indexed header
                     _encodedAuthorityHostHeader = HPackEncoder.EncodeLiteralHeaderFieldWithoutIndexingToAllocatedArray(StaticTable.Authority, hostHeader);
                 }
             }
@@ -171,6 +172,8 @@ namespace System.Net.Http
                     // allow it.
 
                     Debug.Assert(hostHeader != null);
+
+                    // TODO: should use indexing header
                     _encodedAuthorityHostHeader = HPackEncoder.EncodeLiteralHeaderFieldWithoutIndexingToAllocatedArray(StaticTable.Authority, hostHeader);
                 }
             }

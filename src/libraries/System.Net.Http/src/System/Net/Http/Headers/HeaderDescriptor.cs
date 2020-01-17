@@ -4,6 +4,7 @@
 
 using System.Buffers;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Unicode;
 
 namespace System.Net.Http.Headers
@@ -128,6 +129,41 @@ namespace System.Net.Http.Headers
             return HttpRuleParser.DefaultHttpEncoding.GetString(headerValue);
         }
 
+        public string GetHeaderValue(string headerValue)
+        {
+            if (headerValue.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            // If it's a known header value, use the known value instead of allocating a new string.
+            if (_knownHeader != null)
+            {
+                if (_knownHeader.KnownValues != null)
+                {
+                    string[] knownValues = _knownHeader.KnownValues;
+                    for (int i = 0; i < knownValues.Length; i++)
+                    {
+                        if (knownValues[i].Equals(headerValue, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return knownValues[i];
+                        }
+                    }
+                }
+
+                if (_knownHeader == KnownHeaders.Location)
+                {
+                    // Normally Location should be in ISO-8859-1 but occasionally some servers respond with UTF-8.
+                    if (TryDecodeUtf8(headerValue, out string decoded))
+                    {
+                        return decoded;
+                    }
+                }
+            }
+
+            return headerValue;
+        }
+
         private static bool TryDecodeUtf8(ReadOnlySpan<byte> input, out string decoded)
         {
             char[] rented = ArrayPool<char>.Shared.Rent(input.Length);
@@ -147,6 +183,34 @@ namespace System.Net.Http.Headers
 
             decoded = null;
             return false;
+        }
+
+        // The string is considered Latin 1 encoding
+        private static bool TryDecodeUtf8(string input, out string decoded)
+        {
+
+            if (input.Length == 0)
+            {
+                decoded = string.Empty;
+                return true;
+            }
+
+            byte[] rented = ArrayPool<byte>.Shared.Rent(input.Length);
+            try
+            {
+                WebHeaderEncoding.GetBytes(input, 0, input.Length, rented, 0);
+                decoded = Encoding.UTF8.GetString(rented);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                decoded = null;
+                return false;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
     }
 }

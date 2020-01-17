@@ -126,12 +126,9 @@ namespace HttpStress
                         {
                             await func(requestContext, j);
                         }
-                        catch (OperationCanceledException) when (requestContext.IsCancellationRequested || _cts.IsCancellationRequested)
+                        catch (Exception e)
                         {
-                            throw;
-                        }
-                        catch (Exception)
-                        {
+                            Console.WriteLine(e);
                             throw;
                         }
                         _aggregator.RecordSuccess(i, j, stopwatch.Elapsed);
@@ -143,7 +140,7 @@ namespace HttpStress
 
             async Task SendTestRequestToServer(int maxRetries)
             {
-                using HttpClient client = CreateHttpClient();
+                //using HttpClient client = CreateHttpClient();
                 for (int remainingRetries = maxRetries; ; remainingRetries--)
                 {
                     try
@@ -194,7 +191,7 @@ namespace HttpStress
                 Array.Sort(latencies);
 
                 Console.WriteLine($"Latency(ms): \t n={latencies.Length},\tp50={Pc(0.5),6:F3},\tp75={Pc(0.75),6:F3},\tp99={Pc(0.99),6:F3},\tp999={Pc(0.999),6:F3},\tmax={Pc(1),6:N3}\t {_operationNames[operationIndex]}");
-                
+
                 int twentyPercent = (int)(latencies.Length*0.2);
                 Console.WriteLine($"Latency(ms): \t n={latencies.Length},\tp50={(latencies.Skip(twentyPercent).Take(latencies.Length - 2 * twentyPercent).Sum() / latencies.Length),6:F3}");
 

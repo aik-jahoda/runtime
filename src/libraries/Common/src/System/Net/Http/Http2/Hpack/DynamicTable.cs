@@ -2,6 +2,9 @@
 // Licensed under the Apache License, Version 2.0.
 // See THIRD-PARTY-NOTICES.TXT in the project root for license information.
 
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+
 namespace System.Net.Http.HPack
 {
     internal class DynamicTable
@@ -12,71 +15,29 @@ namespace System.Net.Http.HPack
         private int _count;
         private int _insertIndex;
         private int _removeIndex;
+        private int _totalItems = 0;
+
+        private Dictionary<(string, string), int> _lookupTable;
 
         public DynamicTable(int maxSize)
         {
             _buffer = new HeaderField[maxSize / HeaderField.RfcOverhead];
             _maxSize = maxSize;
+            _lookupTable = new Dictionary<(string, string), int>();
         }
 
-        public HeaderTableIndex GetIndex(byte[] name, byte[] value)
+        public HeaderTableIndex GetIndex(string name, string value)
         {
-            int? headerIndex = null;
-            int? headerValueIndex = null;
-            for (int i = 0; i < _count; i++)
-            {
-                HeaderField header = _buffer[(i + _removeIndex) % _buffer.Length];
-                if (NamesEquals(header.Name, name))
-                {
-                    headerIndex ??= getIndex(i);
-                    if (ValuesEquals(header.Value, value))
-                    {
-                        headerValueIndex = getIndex(i);
-                        break;
-                    }
-                }
-            }
+            if (value != null && _lookupTable.TryGetValue((name, value), out int headerWithValueIndex))
+                return new HeaderTableIndex(null, getDynamicTableIndex(headerWithValueIndex));
+            if (_lookupTable.TryGetValue((name, (string)null), out int headerIndex))
+                return new HeaderTableIndex(getDynamicTableIndex(headerIndex), null);
+            return new HeaderTableIndex(null, null);
+        }
 
-            return new HeaderTableIndex(headerIndex, headerValueIndex);
-
-            int getIndex(int bufferPosition)
-            {
-                int circularBufferCorrection = _insertIndex < bufferPosition ? _buffer.Length : 0;
-                return _count + bufferPosition - _insertIndex - circularBufferCorrection + 1;
-            };
-
-            static bool NamesEquals(byte[] name1, byte[] name2)
-            {
-                if (ReferenceEquals(name1, name2))
-                    return true;
-
-
-                if (name1 == null || name2 == null)
-                    return false;
-
-
-                if (name1.Length != name2.Length)
-                    return false;
-
-
-                for (int i = 0; i < name1.Length; i++)
-                {
-                    if (name1[i] != name2[i])
-                        return false;
-                }
-
-                return true;
-            }
-
-            static bool ValuesEquals(byte[] value1, byte[] value2)
-            {
-                if (value1?.Length == 0)
-                {
-                    return true;
-                }
-
-                return NamesEquals(value1, value2);
-            }
+        private int getDynamicTableIndex(int itemIndex)
+        {
+            return StaticTable.Count - itemIndex + _totalItems;
         }
 
         public int Count => _count;
@@ -89,7 +50,8 @@ namespace System.Net.Http.HPack
         {
             get
             {
-                if (index >= _count)
+                index = index - StaticTable.Count - 1;
+                if (index >= _count || index < 0)
                 {
                     throw new IndexOutOfRangeException();
                 }
@@ -106,12 +68,12 @@ namespace System.Net.Http.HPack
             }
         }
 
-        public void Insert(int index, ReadOnlySpan<byte> value)
+        public void Insert(int index, string value)
         {
-            Insert(this[index - 1].Name, value);
+            Insert(this[index].Name, value);
         }
 
-        public void Insert(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
+        public void Insert(string name, string value)
         {
             int entryLength = HeaderField.GetLength(name.Length, value.Length);
             EnsureAvailable(entryLength);
@@ -131,6 +93,11 @@ namespace System.Net.Http.HPack
             _insertIndex = (_insertIndex + 1) % _buffer.Length;
             _size += entry.Length;
             _count++;
+
+            // TODO: add remove from lookup table
+            _lookupTable[(entry.Name, entry.Value)] = _totalItems;
+            _lookupTable[(entry.Name, null)] = _totalItems;
+            _totalItems++;
 
             return;
         }
@@ -163,12 +130,25 @@ namespace System.Net.Http.HPack
         {
             while (_count > 0 && _maxSize - _size < available)
             {
+                int dynamicTableIndex = _totalItems - _count;
+
                 ref HeaderField field = ref _buffer[_removeIndex];
                 _size -= field.Length;
-                field = default;
 
                 _count--;
                 _removeIndex = (_removeIndex + 1) % _buffer.Length;
+
+                if (dynamicTableIndex == _lookupTable[(field.Name, null)])
+                {
+                    _lookupTable.Remove((field.Name, null));
+                }
+
+                if (dynamicTableIndex == _lookupTable[(field.Name, field.Value)])
+                {
+                    _lookupTable.Remove((field.Name, field.Value));
+                }
+
+                field = default;
             }
         }
     }

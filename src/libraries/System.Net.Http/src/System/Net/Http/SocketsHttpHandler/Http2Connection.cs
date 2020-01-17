@@ -900,8 +900,10 @@ namespace System.Net.Http
         {
             if (NetEventSource.IsEnabled) Trace($"{nameof(index)}={index}, {nameof(value)}={value}");
 
+            HeaderTableIndex index = _hpackEncoder.GetIndex(index, value);
+
             int bytesWritten;
-            while (!HPackEncoder.EncodeLiteralHeaderFieldWithoutIndexing(index, value, _headerBuffer.AvailableSpan, out bytesWritten))
+            while (!HPackEncoder.EncodeLiteralField(index, null, value, _headerBuffer.AvailableSpan, out bytesWritten))
             {
                 _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
             }
@@ -1056,8 +1058,7 @@ namespace System.Net.Http
 
                 HeaderTableIndex index = new HeaderTableIndex(knownHeader.Http2StaticTableIndex.GetValueOrDefault(), null);
 
-                // Todo: remove conversion to bytes.
-                while (!_hpackEncoder.EncodeLiteralField(index, Encoding.ASCII.GetBytes(knownHeader.Name), Encoding.ASCII.GetBytes(value), _headerBuffer.AvailableSpan, out bytesWritten))
+                while (!_hpackEncoder.EncodeLiteralField(index, knownHeader.Name, value, _headerBuffer.AvailableSpan, out bytesWritten))
                 {
                     _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
                 }
@@ -1101,15 +1102,11 @@ namespace System.Net.Http
 
         private void WriteHeader(string name, string value)
         {
-            // TODO: do we need this conversion?
-            byte[] rawValue = Text.Encoding.UTF8.GetBytes(value);
-            byte[] rawName = Text.Encoding.UTF8.GetBytes(name);
-
-            HeaderTableIndex headerIndex = _hpackEncoder.GetIndex(rawName, rawValue);
+            HeaderTableIndex headerIndex = _hpackEncoder.GetIndex(name, value);
 
             int bytesWritten;
 
-            while (!_hpackEncoder.EncodeLiteralField(headerIndex, rawName, rawValue, _headerBuffer.AvailableSpan, out bytesWritten))
+            while (!_hpackEncoder.EncodeLiteralField(headerIndex, name, value, _headerBuffer.AvailableSpan, out bytesWritten))
             {
                 _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
             }

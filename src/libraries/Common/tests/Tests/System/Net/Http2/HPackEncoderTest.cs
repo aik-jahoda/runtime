@@ -138,12 +138,12 @@ namespace System.Net.Http.Unit.Tests.HPack
         }
 
         [Fact]
-        public void EncodeStringLiteral()
+        public void EncodeStringLiteral_lowercase()
         {
             var buffer = CreateBuffer();
 
-            string value = "value";
-            Assert.True(HPackEncoder.EncodeStringLiteral(value, buffer, out int bytesWritten));
+            string value = "vAlue";
+            Assert.True(HPackEncoder.EncodeStringLiteral(value, buffer, out int bytesWritten, lowercase: true));
 
             Assert.Equal(6, bytesWritten);
 
@@ -155,13 +155,22 @@ namespace System.Net.Http.Unit.Tests.HPack
             }, buffer[..bytesWritten]);
         }
 
-        [Fact]
-        public void EncodeOctets()
+                [Fact]
+        public void EncodeStringLiteral_onlyAscii()
         {
             var buffer = CreateBuffer();
 
-            byte[] value = Encoding.ASCII.GetBytes("value");
-            Assert.True(HPackEncoder.EncodeOctets(value, buffer, out int bytesWritten));
+            string value = "v\u00fflue";
+            Assert.Throws<HPackEncodingException>(()=>HPackEncoder.EncodeStringLiteral(value, buffer, out int bytesWritten, onlyAscii: true));
+        }
+
+        [Fact]
+        public void EncodeStringLiteral()
+        {
+            var buffer = CreateBuffer();
+
+            string value = "value";
+            Assert.True(HPackEncoder.EncodeStringLiteral(value, buffer, out int bytesWritten));
 
             Assert.Equal(6, bytesWritten);
 
@@ -237,10 +246,10 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             HPackEncoder encoder = new HPackEncoder();
 
-            byte[] headerName = Encoding.ASCII.GetBytes("name");
-            byte[] headerValue = Encoding.ASCII.GetBytes("value");
+            string headerName = "name";
+            string headerValue = "value";
 
-            HeaderTableIndex index = encoder.GetIndex(headerName, new byte[0]); // Header missing in the table
+            HeaderTableIndex index = encoder.GetIndex(headerName, ""); // Header missing in the table
             Assert.True(encoder.EncodeLiteralField(index, headerName, headerValue, buffer, out int bytesWritten));
 
 
@@ -257,6 +266,48 @@ namespace System.Net.Http.Unit.Tests.HPack
         }
 
         [Fact]
+        public void DynamicTable_MatchNothing_lowercase()
+        {
+
+            var buffer = CreateBuffer();
+
+            HPackEncoder encoder = new HPackEncoder();
+
+            string headerName = "nAme";
+            string headerValue = "value";
+
+            HeaderTableIndex index = encoder.GetIndex(headerName, ""); // Header missing in the table
+            Assert.True(encoder.EncodeLiteralField(index, headerName, headerValue, buffer, out int bytesWritten));
+
+
+            // https://tools.ietf.org/html/rfc7541#section-6.2.1
+            Assert.Equal(new byte[] {
+            0b01000000 ,// start pattern
+            0 // No hufman encoding
+            | 4, // Name length
+            (byte)'n', (byte)'a', (byte)'m', (byte)'e', // Name
+            0 // No hufman encoding
+            | 5, // Value length
+            (byte)'v', (byte)'a', (byte)'l', (byte)'u', (byte)'e' // Value
+            }, buffer[..bytesWritten]);
+        }
+
+        [Fact]
+        public void DynamicTable_MatchNothing_onlyAscii()
+        {
+
+            var buffer = CreateBuffer();
+
+            HPackEncoder encoder = new HPackEncoder();
+
+            string headerName = "n\u00ffme";
+            string headerValue = "value";
+
+            HeaderTableIndex index = encoder.GetIndex(headerName, ""); // Header missing in the table
+            Assert.Throws<HPackEncodingException>(()=>encoder.EncodeLiteralField(index, headerName, headerValue, buffer, out int bytesWritten));
+        }
+
+        [Fact]
         public void DynamicTable_MatchName()
         {
 
@@ -264,9 +315,9 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             HPackEncoder encoder = new HPackEncoder();
 
-            byte[] headerName = Encoding.ASCII.GetBytes("name");
-            byte[] header1Value = Encoding.ASCII.GetBytes("value1");
-            byte[] header2Value = Encoding.ASCII.GetBytes("value2");
+            string headerName = "name";
+            string header1Value = "value1";
+            string header2Value = "value2";
 
             HeaderTableIndex index = encoder.GetIndex(headerName, header1Value); // Header missing in the table
             Assert.True(encoder.EncodeLiteralField(index, headerName, header1Value, new byte[1024], out _));
@@ -277,7 +328,7 @@ namespace System.Net.Http.Unit.Tests.HPack
             // https://tools.ietf.org/html/rfc7541#section-6.2.1
             Assert.Equal(new byte[] {
             0b01000000 // start pattern
-            | 1, // Index (6+)
+            | 61 + 1, // Index (6+) (zero index of dynamic table is 61)
             0 // No hufman encoding
             | 6, // Value length
             (byte)'v', (byte)'a', (byte)'l', (byte)'u', (byte)'e', (byte)'2' // Value
@@ -292,11 +343,11 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             HPackEncoder encoder = new HPackEncoder();
 
-            byte[] headerName = Encoding.ASCII.GetBytes("name");
-            byte[] header1Value = Encoding.ASCII.GetBytes("value1");
-            byte[] header2Value = Encoding.ASCII.GetBytes("value2");
+            string headerName = "name";
+            string header1Value = "value1";
+            string header2Value = "value2";
 
-            HeaderTableIndex index = encoder.GetIndex(headerName, new byte[0]); // Header missing in the table
+            HeaderTableIndex index = encoder.GetIndex(headerName, ""); // Header missing in the table
             Assert.True(encoder.EncodeLiteralField(index, headerName, header1Value, new byte[1024], out _));
 
             index = encoder.GetIndex(headerName, header2Value); // Found header with different value
@@ -309,7 +360,7 @@ namespace System.Net.Http.Unit.Tests.HPack
             // https://tools.ietf.org/html/rfc7541#section-6.2.1
             Assert.Equal(new byte[] {
              0b10000000 // start pattern
-            | 2 // Index (7+)
+            | 61 + 2 // Index (7+) (zero index of dynamic table is 61)
             }, buffer[..bytesWritten]);
         }
 

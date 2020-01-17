@@ -138,12 +138,22 @@ namespace System.Net.Http.HPack
             return true;
         }
 
-        public HeaderTableIndex GetIndex(byte[] name, byte[] value)
+        public HeaderTableIndex GetIndex(string name, string value)
         {
             return _dynamicTable.GetIndex(name, value);
         }
 
-        public bool EncodeLiteralField(HeaderTableIndex index, ReadOnlySpan<byte> name, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
+        public HeaderTableIndex GetIndex(int index, string value)
+        {
+            HeaderField staticHeader = StaticTable.Get(index - 1);
+            HeaderTableIndex headerIndex = _dynamicTable.GetIndex(staticHeader.Name, value);
+            if(headerIndex.HeaderWithValueIndex == null)
+                headerIndex = new HeaderTableIndex(index, null);
+            return headerIndex;
+        }
+
+
+        public bool EncodeLiteralField(HeaderTableIndex index, string name, string value, Span<byte> destination, out int bytesWritten)
         {
             if (index.HeaderWithValueIndex.HasValue)
             {
@@ -221,37 +231,37 @@ namespace System.Net.Http.HPack
             return false;
         }
 
-        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
-        {
-            // From https://tools.ietf.org/html/rfc7541#section-6.2.1
-            // ------------------------------------------------------
-            //  0   1   2   3   4   5   6   7
-            // +---+---+---+---+---+---+---+---+
-            // | 0 | 1 |      Index (6+)       |
-            // +---+---+-----------------------+
-            // | H |     Value Length (7+)     |
-            // +---+---------------------------+
-            // | Value String (Length octets)  |
-            // +-------------------------------+
+        // private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, string value, Span<byte> destination, out int bytesWritten)
+        // {
+        //     // From https://tools.ietf.org/html/rfc7541#section-6.2.1
+        //     // ------------------------------------------------------
+        //     //  0   1   2   3   4   5   6   7
+        //     // +---+---+---+---+---+---+---+---+
+        //     // | 0 | 1 |      Index (6+)       |
+        //     // +---+---+-----------------------+
+        //     // | H |     Value Length (7+)     |
+        //     // +---+---------------------------+
+        //     // | Value String (Length octets)  |
+        //     // +-------------------------------+
 
-            if ((uint)destination.Length >= 2)
-            {
-                destination[0] = 0x40;
-                if (IntegerEncoder.Encode(index, 6, destination, out int indexLength))
-                {
-                    Debug.Assert(indexLength >= 1);
+        //     if ((uint)destination.Length >= 2)
+        //     {
+        //         destination[0] = 0x40;
+        //         if (IntegerEncoder.Encode(index, 6, destination, out int indexLength))
+        //         {
+        //             Debug.Assert(indexLength >= 1);
 
-                    if (EncodeOctets(value, destination.Slice(indexLength), out int nameLength))
-                    {
-                        bytesWritten = indexLength + nameLength;
-                        return true;
-                    }
-                }
-            }
+        //             if (EncodeOctets(value, destination.Slice(indexLength), out int nameLength))
+        //             {
+        //                 bytesWritten = indexLength + nameLength;
+        //                 return true;
+        //             }
+        //         }
+        //     }
 
-            bytesWritten = 0;
-            return false;
-        }
+        //     bytesWritten = 0;
+        //     return false;
+        // }
 
         private static bool EncodeLiteralHeaderFieldWithIncrementalIndexing(int index, string value, Span<byte> destination, out int bytesWritten)
         {
@@ -285,7 +295,7 @@ namespace System.Net.Http.HPack
         }
 
 
-        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
+        private static bool EncodeLiteralHeaderFieldWithIncrementalIndexingNewName(string name, string value, Span<byte> destination, out int bytesWritten)
         {
             // From https://tools.ietf.org/html/rfc7541#section-6.2.1
             // ------------------------------------------------------
@@ -305,8 +315,8 @@ namespace System.Net.Http.HPack
             if ((uint)destination.Length >= 3)
             {
                 destination[0] = 0x40;
-                if (EncodeOctets(name, destination.Slice(1), out int nameLength) &&
-                    EncodeOctets(value, destination.Slice(1 + nameLength), out int valueLength))
+                if (EncodeStringLiteral(name, destination.Slice(1), out int nameLength, lowercase: true, onlyAscii: true) &&
+                    EncodeStringLiteral(value, destination.Slice(1 + nameLength), out int valueLength))
                 {
                     bytesWritten = 1 + nameLength + valueLength;
                     return true;
@@ -507,35 +517,35 @@ namespace System.Net.Http.HPack
             return false;
         }
 
-        public static bool EncodeOctets(ReadOnlySpan<byte> value, Span<byte> destination, out int bytesWritten)
-        {
-            // From https://tools.ietf.org/html/rfc7541#section-5.2
-            // ------------------------------------------------------
-            //   0   1   2   3   4   5   6   7
-            // +---+---+---+---+---+---+---+---+
-            // | H |    String Length (7+)     |
-            // +---+---------------------------+
-            // |  String Data (Length octets)  |
-            // +-------------------------------+
+        // public static bool EncodeOctets(string value, Span<byte> destination, out int bytesWritten)
+        // {
+        //     // From https://tools.ietf.org/html/rfc7541#section-5.2
+        //     // ------------------------------------------------------
+        //     //   0   1   2   3   4   5   6   7
+        //     // +---+---+---+---+---+---+---+---+
+        //     // | H |    String Length (7+)     |
+        //     // +---+---------------------------+
+        //     // |  String Data (Length octets)  |
+        //     // +-------------------------------+
 
-            if (destination.Length != 0)
-            {
-                destination[0] = 0; // TODO: Use Huffman encoding
-                if (IntegerEncoder.Encode(value.Length, 7, destination, out int integerLength))
-                {
-                    Debug.Assert(integerLength >= 1);
+        //     if (destination.Length != 0)
+        //     {
+        //         destination[0] = 0; // TODO: Use Huffman encoding
+        //         if (IntegerEncoder.Encode(value.Length, 7, destination, out int integerLength))
+        //         {
+        //             Debug.Assert(integerLength >= 1);
 
-                    if (value.TryCopyTo(destination.Slice(integerLength)))
-                    {
-                        bytesWritten = integerLength + value.Length;
-                        return true;
-                    }
-                }
-            }
+        //             if (value.TryCopyTo(destination.Slice(integerLength)))
+        //             {
+        //                 bytesWritten = integerLength + value.Length;
+        //                 return true;
+        //             }
+        //         }
+        //     }
 
-            bytesWritten = 0;
-            return false;
-        }
+        //     bytesWritten = 0;
+        //     return false;
+        // }
 
 
         private static bool EncodeDynamicTableSizeUpdate(uint value, Span<byte> destination, out int bytesWritten)

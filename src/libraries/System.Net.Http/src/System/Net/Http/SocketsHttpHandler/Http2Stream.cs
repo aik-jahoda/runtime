@@ -26,7 +26,7 @@ namespace System.Net.Http
                 1024;
 #endif
 
-            private static readonly byte[] s_statusHeaderName = Encoding.ASCII.GetBytes(":status");
+            private const string s_statusHeaderName = ":status";
 
             private readonly Http2Connection _connection;
             private readonly int _streamId;
@@ -396,9 +396,9 @@ namespace System.Net.Http
 
             public void OnWindowUpdate(int amount) => _streamWindow.AdjustCredit(amount);
 
-            public void OnHeader(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
+            public void OnHeader(string name, string value)
             {
-                if (NetEventSource.IsEnabled) Trace($"{Encoding.ASCII.GetString(name)}: {Encoding.ASCII.GetString(value)}");
+                if (NetEventSource.IsEnabled) Trace($"{name}: {value}");
                 Debug.Assert(name != null && name.Length > 0);
 
                 _headerBudgetRemaining -= name.Length + value.Length;
@@ -418,7 +418,7 @@ namespace System.Net.Http
                         return;
                     }
 
-                    if (name[0] == (byte)':')
+                    if (name[0] == ':')
                     {
                         if (_responseProtocolState != ResponseProtocolState.ExpectingHeaders && _responseProtocolState != ResponseProtocolState.ExpectingStatus)
                         {
@@ -427,7 +427,7 @@ namespace System.Net.Http
                             throw new HttpRequestException(SR.net_http_invalid_response_pseudo_header_in_trailer);
                         }
 
-                        if (name.SequenceEqual(s_statusHeaderName))
+                        if (name == s_statusHeaderName)
                         {
                             if (_responseProtocolState != ResponseProtocolState.ExpectingStatus)
                             {
@@ -435,13 +435,13 @@ namespace System.Net.Http
                                 throw new HttpRequestException(SR.Format(SR.net_http_invalid_response_status_code, "duplicate status"));
                             }
 
-                            byte status1, status2, status3;
+                            char status1, status2, status3;
                             if (value.Length != 3 ||
                                 !IsDigit(status1 = value[0]) ||
                                 !IsDigit(status2 = value[1]) ||
                                 !IsDigit(status3 = value[2]))
                             {
-                                throw new HttpRequestException(SR.Format(SR.net_http_invalid_response_status_code, Encoding.ASCII.GetString(value)));
+                                throw new HttpRequestException(SR.Format(SR.net_http_invalid_response_status_code, value));
                             }
 
                             int statusValue = (100 * (status1 - '0') + 10 * (status2 - '0') + (status3 - '0'));
@@ -481,7 +481,7 @@ namespace System.Net.Http
                         }
                         else
                         {
-                            if (NetEventSource.IsEnabled) Trace($"Invalid response pseudo-header '{Encoding.ASCII.GetString(name)}'.");
+                            if (NetEventSource.IsEnabled) Trace($"Invalid response pseudo-header '{name}'.");
                             throw new HttpRequestException(SR.net_http_invalid_response);
                         }
                     }
@@ -502,7 +502,7 @@ namespace System.Net.Http
                         if (!HeaderDescriptor.TryGet(name, out HeaderDescriptor descriptor))
                         {
                             // Invalid header name
-                            throw new HttpRequestException(SR.Format(SR.net_http_invalid_response_header_name, Encoding.ASCII.GetString(name)));
+                            throw new HttpRequestException(SR.Format(SR.net_http_invalid_response_header_name, name));
                         }
 
                         string headerValue = descriptor.GetHeaderValue(value);
@@ -526,6 +526,9 @@ namespace System.Net.Http
                         }
                     }
                 }
+
+            static bool IsDigit(char c) => (c - '0') <= '9' - '0';
+
             }
 
             public void OnHeadersStart()

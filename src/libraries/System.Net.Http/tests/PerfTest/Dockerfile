@@ -10,5 +10,5 @@ RUN dotnet build -c $CONFIGURATION
 EXPOSE 5001
 
 ENV CONFIGURATION=$CONFIGURATION
-ENV HTTPSTRESS_ARGS='-runMode server -cancelRate 0 -trace console -serverUri https://*:5001'
+ENV HTTPSTRESS_ARGS='-runMode server -trace console -serverUri http://*:5001'
 CMD ./run.sh

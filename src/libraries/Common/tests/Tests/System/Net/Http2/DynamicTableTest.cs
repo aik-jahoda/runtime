@@ -14,8 +14,10 @@ namespace System.Net.Http.Unit.Tests.HPack
 {
     public class DynamicTableTest
     {
-        private readonly HeaderField _header1 = new HeaderField(Encoding.ASCII.GetBytes("header-1"), Encoding.ASCII.GetBytes("value1"));
-        private readonly HeaderField _header2 = new HeaderField(Encoding.ASCII.GetBytes("header-02"), Encoding.ASCII.GetBytes("value_2"));
+        private readonly HeaderField _header1 = new HeaderField("header-1", "value1");
+        private readonly HeaderField _header2 = new HeaderField("header-02", "value_2");
+
+        private const int DynamicTableBaseIndex = 62;
 
         [Fact]
         public void DynamicTable_IsInitiallyEmpty()
@@ -65,10 +67,13 @@ namespace System.Net.Http.Unit.Tests.HPack
         public void BoundsCheck_ThrowsIndexOutOfRangeException()
         {
             DynamicTable dynamicTable = new DynamicTable(4096);
-            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[0]);
+            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[DynamicTableBaseIndex]);
 
             dynamicTable.Insert(_header1.Name, _header1.Value);
-            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[1]);
+            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[DynamicTableBaseIndex + 1]);
+
+            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[DynamicTableBaseIndex - 1]);
+            Assert.Throws<IndexOutOfRangeException>(() => dynamicTable[0]);
         }
 
         [Fact]
@@ -104,7 +109,7 @@ namespace System.Net.Http.Unit.Tests.HPack
         {
             FieldInfo insertIndexField = typeof(DynamicTable).GetField("_insertIndex", BindingFlags.NonPublic | BindingFlags.Instance);
             DynamicTable table = new DynamicTable(maxSize: 256);
-            Stack<byte[]> insertedHeaders = new Stack<byte[]>();
+            Stack<string> insertedHeaders = new Stack<string>();
 
             // Insert into dynamic table until its insert index into its ring buffer loops back to 0.
             do
@@ -121,7 +126,7 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             void InsertOne()
             {
-                byte[] data = Encoding.ASCII.GetBytes($"header-{insertedHeaders.Count}");
+                string data = $"header-{insertedHeaders.Count}";
 
                 insertedHeaders.Push(data);
                 table.Insert(data, data);
@@ -134,11 +139,11 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             for (int i = 0; i < table.Count; ++i)
             {
-                HeaderField dynamicField = table[i];
-                byte[] expectedData = insertedHeaders.Pop();
+                HeaderField dynamicField = table[i + DynamicTableBaseIndex];
+                string expectedData = insertedHeaders.Pop();
 
-                Assert.True(expectedData.AsSpan().SequenceEqual(dynamicField.Name));
-                Assert.True(expectedData.AsSpan().SequenceEqual(dynamicField.Value));
+                Assert.True(expectedData.Equals(dynamicField.Name, StringComparison.OrdinalIgnoreCase));
+                Assert.True(expectedData.Equals(dynamicField.Value, StringComparison.OrdinalIgnoreCase));
             }
         }
 
@@ -154,7 +159,7 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             while (insertedSize != insertSize)
             {
-                byte[] data = Encoding.ASCII.GetBytes($"header-{dynamicTable.Size}".PadRight(16, ' '));
+                string data = $"header-{dynamicTable.Size}".PadRight(16, ' ');
                 Debug.Assert(data.Length == 16);
 
                 dynamicTable.Insert(data, data);
@@ -165,7 +170,7 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             for (int i = 0; i < dynamicTable.Count; ++i)
             {
-                headers.Add(dynamicTable[i]);
+                headers.Add(dynamicTable[DynamicTableBaseIndex + i]);
             }
 
             dynamicTable.Resize(finalMaxSize);
@@ -175,8 +180,8 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             for (int i = 0; i < dynamicTable.Count; ++i)
             {
-                Assert.True(headers[i].Name.AsSpan().SequenceEqual(dynamicTable[i].Name));
-                Assert.True(headers[i].Value.AsSpan().SequenceEqual(dynamicTable[i].Value));
+                Assert.Equal(headers[i].Name, dynamicTable[DynamicTableBaseIndex + i].Name);
+                Assert.Equal(headers[i].Value, dynamicTable[DynamicTableBaseIndex + i].Value);
             }
         }
 
@@ -233,7 +238,7 @@ namespace System.Net.Http.Unit.Tests.HPack
             dynamicTable.Insert(_header1.Name, _header1.Value);
             dynamicTable.Insert(_header2.Name, _header2.Value);
 
-            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("unknown-header"), Encoding.ASCII.GetBytes("unknown-value"));
+            HeaderTableIndex index = dynamicTable.GetIndex("unknown-header", "unknown-value");
 
             Assert.Null(index.HeaderIndex);
             Assert.Null(index.HeaderWithValueIndex);
@@ -244,7 +249,7 @@ namespace System.Net.Http.Unit.Tests.HPack
         {
             DynamicTable dynamicTable = new DynamicTable(4096);
 
-            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("unknown-header"), Encoding.ASCII.GetBytes("unknown-value"));
+            HeaderTableIndex index = dynamicTable.GetIndex("unknown-header", "unknown-value");
 
             Assert.Null(index.HeaderIndex);
             Assert.Null(index.HeaderWithValueIndex);
@@ -260,9 +265,9 @@ namespace System.Net.Http.Unit.Tests.HPack
             dynamicTable.Insert(_header2.Name, _header2.Value);
             VerifyTableEntries(dynamicTable, _header2);
 
-            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("header-02"), Encoding.ASCII.GetBytes("unknown-value"));
+            HeaderTableIndex index = dynamicTable.GetIndex("header-02", "unknown-value");
 
-            Assert.Equal(2, index.HeaderIndex);
+            Assert.Equal(DynamicTableBaseIndex, index.HeaderIndex);
             Assert.Null(index.HeaderWithValueIndex);
         }
 
@@ -274,10 +279,24 @@ namespace System.Net.Http.Unit.Tests.HPack
             dynamicTable.Insert(_header1.Name, _header1.Value);
             dynamicTable.Insert(_header2.Name, _header2.Value);
 
-            HeaderTableIndex index = dynamicTable.GetIndex(Encoding.ASCII.GetBytes("header-02"), Encoding.ASCII.GetBytes("value_2"));
+            HeaderTableIndex index = dynamicTable.GetIndex("header-02", "value_2");
 
-            Assert.Equal(2, index.HeaderIndex);
-            Assert.Equal(2, index.HeaderIndex);
+            Assert.Null(index.HeaderIndex);
+            Assert.Equal(DynamicTableBaseIndex, index.HeaderWithValueIndex);
+        }
+
+        [Fact]
+        public void DynamicTable_GetKnownHeaderNameAndValueIndex_OfOldHeader()
+        {
+            DynamicTable dynamicTable = new DynamicTable(4096);
+
+            dynamicTable.Insert(_header1.Name, _header1.Value);
+            dynamicTable.Insert(_header2.Name, _header2.Value);
+
+            HeaderTableIndex index = dynamicTable.GetIndex("header-1", "value1");
+
+            Assert.Null(index.HeaderIndex);
+            Assert.Equal(DynamicTableBaseIndex + 1, index.HeaderWithValueIndex);
         }
 
         public static IEnumerable<object[]> CreateResizeData()
@@ -296,12 +315,9 @@ namespace System.Net.Http.Unit.Tests.HPack
 
             for (int i = 0; i < entries.Length; i++)
             {
-                HeaderField headerField = dynamicTable[i];
+                HeaderField headerField = dynamicTable[i + DynamicTableBaseIndex];
 
-                Assert.NotSame(entries[i].Name, headerField.Name);
                 Assert.Equal(entries[i].Name, headerField.Name);
-
-                Assert.NotSame(entries[i].Value, headerField.Value);
                 Assert.Equal(entries[i].Value, headerField.Value);
             }
         }

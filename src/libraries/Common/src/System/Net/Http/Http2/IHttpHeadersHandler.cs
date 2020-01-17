@@ -6,7 +6,7 @@ namespace System.Net.Http
 {
     internal interface IHttpHeadersHandler
     {
-        void OnHeader(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value);
+        void OnHeader(string name, string value);
         void OnHeadersComplete(bool endStream);
     }
 }

@@ -90,10 +90,9 @@ namespace System.Net.Http.HPack
         private byte[] _headerValueOctets;
 
         private State _state = State.Ready;
-        private byte[] _headerName;
+        private string _headerName;
         private int _stringIndex;
         private int _stringLength;
-        private int _headerNameLength;
         private int _headerValueLength;
         private bool _index;
         private bool _huffman;
@@ -371,14 +370,14 @@ namespace System.Net.Http.HPack
         {
             OnString(nextState: State.Ready);
 
-            var headerNameSpan = new Span<byte>(_headerName, 0, _headerNameLength);
-            var headerValueSpan = new Span<byte>(_headerValueOctets, 0, _headerValueLength);
+            var headerNameSpan = _headerName;
+            var headerValue = WebHeaderEncoding.GetString(_headerValueOctets, 0, _headerValueLength);
 
-            handler?.OnHeader(headerNameSpan, headerValueSpan);
+            handler?.OnHeader(_headerName, headerValue);
 
             if (_index)
             {
-                _dynamicTable.Insert(headerNameSpan, headerValueSpan);
+                _dynamicTable.Insert(headerNameSpan, headerValue);
             }
         }
 
@@ -402,7 +401,6 @@ namespace System.Net.Http.HPack
         {
             HeaderField header = GetHeader(index);
             _headerName = header.Name;
-            _headerNameLength = header.Name.Length;
             _state = State.HeaderValueLength;
         }
 
@@ -447,8 +445,8 @@ namespace System.Net.Http.HPack
             {
                 if (_state == State.HeaderName)
                 {
-                    _headerNameLength = Decode(ref _headerNameOctets);
-                    _headerName = _headerNameOctets;
+                    var headerNameLength = Decode(ref _headerNameOctets);
+                    _headerName = WebHeaderEncoding.GetString(_headerNameOctets, 0, headerNameLength);
                 }
                 else
                 {
@@ -469,7 +467,7 @@ namespace System.Net.Http.HPack
             {
                 return index <= StaticTable.Count
                     ? StaticTable.Get(index - 1)
-                    : _dynamicTable[index - StaticTable.Count - 1];
+                    : _dynamicTable[index];
             }
             catch (IndexOutOfRangeException)
             {

@@ -158,6 +158,11 @@ public static class Program
         Console.WriteLine();
 
 
+            // Handle command-line arguments.
+        using HttpEventListener listenner =
+                config.LogPath == null ? null :
+                new HttpEventListener(config.LogPath != "console" ? new StreamWriter(config.LogPath) { AutoFlush = true } : null);
+
         StressServer? server = null;
         if (config.RunMode.HasFlag(RunMode.server))
         {

@@ -221,7 +221,7 @@ namespace StaticTestGenerator
             out string testAssemblyPath,
             out string runtimeAssembliesPath,
             out string outputPath,
-            out Xunit.ConsoleClient.CommandLine? xunitCommandLine)
+            out ConsoleClient.CommandLine? xunitCommandLine)
         {
             if (args.Length >= 3)
             {

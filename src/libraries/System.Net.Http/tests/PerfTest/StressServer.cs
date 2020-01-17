@@ -9,11 +9,11 @@ using System.Diagnostics.Tracing;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
@@ -117,24 +117,20 @@ namespace HttpStress
                                 HttpProtocols.Http2 :
                                 HttpProtocols.Http1 ;
                         }
+                        listenOptions.UseConnectionLogging();
                     }
                 });
             };
 
             // Output only warnings and errors from Kestrel
             host = host
-                .ConfigureLogging(log => log.AddFilter("Microsoft.AspNetCore", level => configuration.LogAspNet ? level >= LogLevel.Warning : false))
+                .ConfigureLogging(log => log.AddFilter("Microsoft.AspNetCore", level => configuration.LogAspNet ? level >= LogLevel.Debug : false))
                 // Set up how each request should be handled by the server.
                 .Configure(app =>
                 {
                     app.UseRouting();
                     app.UseEndpoints(MapRoutes);
                 });
-
-            // Handle command-line arguments.
-            _eventListener =
-                configuration.LogPath == null ? null :
-                new HttpEventListener(configuration.LogPath != "console" ? new StreamWriter(configuration.LogPath) { AutoFlush = true } : null);
 
             SetUpJustInTimeLogging();
 
@@ -222,7 +218,7 @@ namespace HttpStress
                 // Post echos back the requested content, first buffering it all server-side, then sending it all back.
                 var s = new MemoryStream();
                 await context.Request.Body.CopyToAsync(s);
-                
+
                 ulong checksum = CRC.CalculateCRC(s.ToArray());
                 AppendChecksumHeader(context.Response.Headers, checksum);
 
@@ -328,7 +324,7 @@ namespace HttpStress
             {
                 var uri = new Uri(serverUri);
                 return (uri.Scheme, uri.Host, uri.Port);
-            } 
+            }
             catch (UriFormatException)
             {
                 // Simple uri parser: used to parse values valid in Kestrel
@@ -344,61 +340,13 @@ namespace HttpStress
             }
         }
 
-        /// <summary>EventListener that dumps HTTP events out to either the console or a stream writer.</summary>
-        private sealed class HttpEventListener : EventListener
-        {
-            private readonly StreamWriter? _writer;
-
-            public HttpEventListener(StreamWriter? writer = null) => _writer = writer;
-
-            protected override void OnEventSourceCreated(EventSource eventSource)
-            {
-                if (eventSource.Name == "Microsoft-System-Net-Http")
-                    EnableEvents(eventSource, EventLevel.LogAlways);
-            }
-
-            protected override void OnEventWritten(EventWrittenEventArgs eventData)
-            {
-                lock (Console.Out)
-                {
-                    if (_writer != null)
-                    {
-                        var sb = new StringBuilder().Append($"[{eventData.EventName}] ");
-                        for (int i = 0; i < eventData.Payload?.Count; i++)
-                        {
-                            if (i > 0)
-                                sb.Append(", ");
-                            sb.Append(eventData.PayloadNames?[i]).Append(": ").Append(eventData.Payload[i]);
-                        }
-                        _writer.WriteLine(sb);
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.Write($"[{eventData.EventName}] ");
-                        Console.ResetColor();
-                        for (int i = 0; i < eventData.Payload?.Count; i++)
-                        {
-                            if (i > 0)
-                                Console.Write(", ");
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.Write(eventData.PayloadNames?[i] + ": ");
-                            Console.ResetColor();
-                            Console.Write(eventData.Payload[i]);
-                        }
-                        Console.WriteLine();
-                    }
-                }
-            }
-        }
-
         private static string CreateResponseContent(HttpContext ctx)
         {
             return ServerContentUtils.CreateStringContent(GetExpectedContentLength());
 
             int GetExpectedContentLength()
             {
-                if (ctx.Request.Headers.TryGetValue(ExpectedResponseContentLength, out StringValues values) && 
+                if (ctx.Request.Headers.TryGetValue(ExpectedResponseContentLength, out StringValues values) &&
                     values.Count == 1 &&
                     int.TryParse(values[0], out int result))
                 {
