@@ -2581,7 +2581,7 @@ public:
 
     GenTree* gtNewIndexRef(var_types typ, GenTree* arrayOp, GenTree* indexOp);
 
-    GenTreeArrLen* gtNewArrLen(var_types typ, GenTree* arrayOp, int lenOffset);
+    GenTreeArrLen* gtNewArrLen(var_types typ, GenTree* arrayOp, int lenOffset, BasicBlock* block);
 
     GenTree* gtNewIndir(var_types typ, GenTree* addr);
 
@@ -4442,8 +4442,6 @@ public:
     void fgExpandQmarkForCastInstOf(BasicBlock* block, Statement* stmt);
     void fgExpandQmarkStmt(BasicBlock* block, Statement* stmt);
     void fgExpandQmarkNodes();
-
-    void fgMorph();
 
     // Do "simple lowering."  This functionality is (conceptually) part of "general"
     // lowering that is distributed between fgMorph and the lowering phase of LSRA.
@@ -6399,8 +6397,8 @@ public:
     typedef JitHashTable<unsigned, JitSmallPrimitiveKeyFuncs<unsigned>, GenTree*> LocalNumberToNullCheckTreeMap;
 
     bool gtIsVtableRef(GenTree* tree);
-    GenTree* getArrayLengthFromAllocation(GenTree* tree);
-    GenTree* getObjectHandleNodeFromAllocation(GenTree* tree);
+    GenTree* getArrayLengthFromAllocation(GenTree* tree DEBUGARG(BasicBlock* block));
+    GenTree* getObjectHandleNodeFromAllocation(GenTree* tree DEBUGARG(BasicBlock* block));
     GenTree* optPropGetValueRec(unsigned lclNum, unsigned ssaNum, optPropKind valueKind, int walkDepth);
     GenTree* optPropGetValue(unsigned lclNum, unsigned ssaNum, optPropKind valueKind);
     GenTree* optEarlyPropRewriteTree(GenTree* tree, LocalNumberToNullCheckTreeMap* nullCheckMap);
@@ -6417,6 +6415,14 @@ public:
                                      unsigned nullCheckLclNum,
                                      bool     isInsideTry,
                                      bool     checkSideEffectSummary);
+#if DEBUG
+    void optCheckFlagsAreSet(unsigned    methodFlag,
+                             const char* methodFlagStr,
+                             unsigned    bbFlag,
+                             const char* bbFlagStr,
+                             GenTree*    tree,
+                             BasicBlock* basicBlock);
+#endif
 
 #if ASSERTION_PROP
     /**************************************************************************
