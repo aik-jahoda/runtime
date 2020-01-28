@@ -147,7 +147,7 @@ namespace System.Net.Http.HPack
         {
             HeaderField staticHeader = StaticTable.Get(index - 1);
             HeaderTableIndex headerIndex = _dynamicTable.GetIndex(staticHeader.Name, value);
-            if(headerIndex.HeaderWithValueIndex == null)
+            if (headerIndex.HeaderWithValueIndex == null)
                 headerIndex = new HeaderTableIndex(index, null);
             return headerIndex;
         }

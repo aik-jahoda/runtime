@@ -900,10 +900,10 @@ namespace System.Net.Http
         {
             if (NetEventSource.IsEnabled) Trace($"{nameof(index)}={index}, {nameof(value)}={value}");
 
-            HeaderTableIndex index = _hpackEncoder.GetIndex(index, value);
+            HeaderTableIndex headerIndex = _hpackEncoder.GetIndex(index, value);
 
             int bytesWritten;
-            while (!HPackEncoder.EncodeLiteralField(index, null, value, _headerBuffer.AvailableSpan, out bytesWritten))
+            while (!_hpackEncoder.EncodeLiteralField(headerIndex, null, value, _headerBuffer.AvailableSpan, out bytesWritten))
             {
                 _headerBuffer.EnsureAvailableSpace(_headerBuffer.AvailableLength + 1);
             }
