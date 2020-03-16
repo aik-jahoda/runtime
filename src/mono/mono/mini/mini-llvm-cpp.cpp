@@ -174,6 +174,12 @@ mono_llvm_build_atomic_rmw (LLVMBuilderRef builder, AtomicRMWOp op, LLVMValueRef
 	case LLVM_ATOMICRMW_OP_ADD:
 		aop = AtomicRMWInst::Add;
 		break;
+	case LLVM_ATOMICRMW_OP_AND:
+		aop = AtomicRMWInst::And;
+		break;
+	case LLVM_ATOMICRMW_OP_OR:
+		aop = AtomicRMWInst::Or;
+		break;
 	default:
 		g_assert_not_reached ();
 		break;
@@ -601,4 +607,75 @@ mono_llvm_check_cpu_features (const CpuFeatureAliasFlag *features, int length)
 		*/
 	}
 	return flags;
+}
+
+/* Map our intrinsic ID to the LLVM intrinsic id */
+static Intrinsic::ID
+get_intrins_id (IntrinsicId id)
+{
+	Intrinsic::ID intrins_id = Intrinsic::ID::not_intrinsic;
+	switch (id) {
+#define INTRINS(id, llvm_id) case INTRINS_ ## id: intrins_id = Intrinsic::ID::llvm_id; break;
+#define INTRINS_OVR(id, llvm_id) case INTRINS_ ## id: intrins_id = Intrinsic::ID::llvm_id; break;
+#include "llvm-intrinsics.h"
+	default:
+		break;
+	}
+	return intrins_id;
+}
+
+static bool
+is_overloaded_intrins (IntrinsicId id)
+{
+	switch (id) {
+#define INTRINS(id, llvm_id)
+#define INTRINS_OVR(id, llvm_id) case INTRINS_ ## id: return true;
+#include "llvm-intrinsics.h"
+	default:
+		break;
+	}
+	return false;
+}
+
+/*
+ * mono_llvm_register_intrinsic:
+ *
+ *   Register an LLVM intrinsic identified by ID.
+ */
+LLVMValueRef
+mono_llvm_register_intrinsic (LLVMModuleRef module, IntrinsicId id)
+{
+	if (is_overloaded_intrins (id))
+		return NULL;
+
+	auto intrins_id = get_intrins_id (id);
+	if (intrins_id != Intrinsic::ID::not_intrinsic) {
+		Function *f = Intrinsic::getDeclaration (unwrap (module), intrins_id);
+		if (!f) {
+			outs () << id << "\n";
+			g_assert_not_reached ();
+		}
+		return wrap (f);
+	} else {
+		return NULL;
+	}
+}
+
+/*
+ * mono_llvm_register_intrinsic:
+ *
+ *   Register an overloaded LLVM intrinsic identified by ID using the supplied types.
+ */
+LLVMValueRef
+mono_llvm_register_overloaded_intrinsic (LLVMModuleRef module, IntrinsicId id, LLVMTypeRef *types, int ntypes)
+{
+	auto intrins_id = get_intrins_id (id);
+
+	const int max_types = 5;
+	g_assert (ntypes <= max_types);
+    Type *arr [max_types];
+    for (int i = 0; i < ntypes; ++i)
+		arr [i] = unwrap (types [i]);
+    auto f = Intrinsic::getDeclaration (unwrap (module), intrins_id, { arr, (size_t)ntypes });
+    return wrap (f);
 }

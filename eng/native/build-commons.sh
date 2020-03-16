@@ -87,11 +87,16 @@ build_native()
         if [[ "$__IsMSBuildOnNETCoreSupported" == 0 ]]; then __SkipGenerateVersion=1; fi
         # Drop version.c file
         __versionSourceFile="$intermediatesDir/version.c"
+
+        if [[ ! -z "${__LogsDir}" ]]; then
+            __binlogArg="-bl:\"$__LogsDir/GenNativeVersion_$__TargetOS.$__BuildArch.$__BuildType.binlog\""
+        fi
+
         if [[ "$__SkipGenerateVersion" == 0 ]]; then
             "$__RepoRootDir/eng/common/msbuild.sh" /clp:nosummary "$__ArcadeScriptArgs" "$__RepoRootDir"/eng/empty.csproj \
                                                    /p:NativeVersionFile="$__versionSourceFile" \
                                                    /t:GenerateNativeVersionFile /restore \
-                                                   $__CommonMSBuildArgs $__UnprocessedBuildArgs
+                                                   $__CommonMSBuildArgs $__binlogArg $__UnprocessedBuildArgs
             local exit_code="$?"
             if [[ "$exit_code" != 0 ]]; then
                 echo "${__ErrMsgPrefix}Failed to generate native version file."
@@ -163,8 +168,9 @@ usage()
     echo ""
     echo "Common Options:"
     echo ""
-    echo "BuildArch can be: -arm, -armel, -arm64, -armel, x64, x86, -wasm"
+    echo "BuildArch can be: -arm, -armel, -arm64, x64, x86, -wasm"
     echo "BuildType can be: -debug, -checked, -release"
+    echo "-os: target OS (defaults to running OS)"
     echo "-bindir: output directory (defaults to $__ProjectRoot/artifacts)"
     echo "-ci: indicates if this is a CI build."
     echo "-clang: optional argument to build using clang in PATH (default)."
@@ -348,6 +354,16 @@ while :; do
 
         wasm|-wasm)
             __BuildArch=wasm
+            ;;
+
+        os|-os)
+            if [[ -n "$2" ]]; then
+                __TargetOS="$2"
+                shift
+            else
+                echo "ERROR: 'os' requires a non-empty option argument"
+                exit 1
+            fi
             ;;
 
         *)
